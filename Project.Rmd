@@ -1,0 +1,95 @@
+Bar lifting model
+========================================================
+Short description of prediction model for correctness of bar lifting exersice, judged by data provided by personal activity sensors.
+
+
+## Importing, cleaning and exploring data
+First, two datasets provided were imported. Empty strings and '#DIV/0!' strings were considered as NA.
+```{r}
+test<-read.csv('pml-testing.csv',na.strings=c('NA','','#DIV/0!'))
+train<-read.csv('pml-training.csv',na.strings=c('NA','','#DIV/0!'))
+```
+
+I have filtered out non-complete variables from both sets, as well as timestamps and personal data:
+```{r}
+notnacount<-colSums(!is.na(train)) # Check how many elements are NA
+fltr<-notnacount==length(train[,1])
+train<-train[fltr] # non-complete variables
+train<-train[-c(1:7)] #  Timestamps  and  username
+ftest<-test[fltr]
+ftest<-ftest[-c(1:7)]
+ftest<-ftest[-53]
+```
+
+Finally the training set was splitted to a final training set *ftrain* and a validation set in *fvalid*. Split ratio: 70/30
+```{r}
+library(caret)
+inTrain<-createDataPartition(y=train$classe, p=0.7, list=FALSE)
+ftrain<-train[inTrain,]
+fvalid<-train[-inTrain,]
+```
+
+Check briefly, how the outcomes are distributed:
+```{r}
+summary(ftrain$classe)
+```
+
+No total majority of certain value, so no naive guess to formulate.
+
+## Machine learning
+I considered three approaches: a decision tree, a random forest and a boosting. For each approach a separate model was fitted on the _ftrain_ set and then validated on the _fvalid_ set. 
+### Decision Tree
+The easiest and fastest thing was to build a decision tree:
+```{r,cache=FALSE}
+#library(rattle)
+
+TreeFit<-train(classe~.,data=ftrain,method='rpart') # Fit the model
+TreeVPredict<-predict(TreeFit, newdata=fvalid) # Predict validation set
+CMTvalid<-confusionMatrix(TreeVPredict, fvalid$classe) # 
+CMTself<-confusionMatrix(predict(TreeFit,newdata=ftrain), ftrain$classe)
+CMTself$overall['Accuracy'] # on train set
+CMTvalid$overall['Accuracy'] # on validation set
+```
+
+This approach does not provide any reasonable accuracy for the validation set: Accuracy=`r CMTvalid$overall['Accuracy']`. Even the train set accuracy is quite poor: Accuracy=`r CMTself$overall['Accuracy']`. 
+
+### Random Forest
+Since the decision tree showed a poor result, I proceed with more advanced method, i.e. random forest approach. Note that the *caret* package didn't work well for the fitting, so original *randomForest* package was used instead.
+
+```{r,cache=FALSE}
+library(randomForest)
+RForestFit<-randomForest(classe~.,data=ftrain,ntree=1000)
+RForestVPredict<-predict(RForestFit, newdata=fvalid)
+CMRFvalid<-confusionMatrix(RForestVPredict, fvalid$classe)
+CMRFself<-confusionMatrix(predict(RForestFit,newdata=ftrain), ftrain$classe)
+```
+
+The predicting power changed drastically: The accuracy for validation set is close to 100%: `r CMRFvalid$overall['Accuracy']`. The train set accuracy is 100%: `r CMRFself$overall['Accuracy']`. 
+
+In addition, we can check significance of the variables for the prediction:
+```{r fig.width=7, fig.height=6}
+I<-varImp(RForestFit)
+plot(seq_along(I[,]),I[order(-I[,]),], type='p')
+```
+
+As we can see, most of the variables have nonvanishing significance. And the most valuable one is *roll_belt*.
+### Boosting
+```{r, cache=TRUE}
+gbmGrid <-  expand.grid(interaction.depth = 1,
+                        n.trees = 500,
+                        shrinkage = 0.1)
+BoostFit <- train(classe ~ .,method="gbm",data=ftrain,tuneGrid=gbmGrid, verbose=FALSE)
+BoostVPredict<-predict(BoostFit, newdata=fvalid)
+CMBvalid<-confusionMatrix(BoostVPredict, fvalid$classe)
+CMBself<-confusionMatrix(predict(BoostFit,newdata=ftrain), ftrain$classe)
+```
+Here we can see some decrease of the accuracy: Validation set: `r CMBvalid$overall['Accuracy']`. The train set accuracy is 100% as before: `r CMBself$overall['Accuracy']`. 
+However, the calcualtion time is significantly larger: The random forest fitting was about 10 times faster.
+
+# Summary
+Considering the accuracy and the performance I favor RandomFores model for the test set prediction
+
+```{r}
+RForestTPredict<-predict(RForestFit, newdata=ftest)
+RForestTPredict
+```
